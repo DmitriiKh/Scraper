@@ -1,0 +1,110 @@
+#!/bin/bash
+
+NEW_LINE='\n'
+
+SEARCH_PHRASE=$1
+SEARCH_URL='https://www.google.com/search?q='
+
+# Replace spaces with '_'
+OUTPUT_FILE_NAME=${SEARCH_PHRASE/ /_}'.txt'
+
+# Empty otput file
+> $OUTPUT_FILE_NAME
+
+get_page_content () {
+    local url=$1
+    echo $(lynx -dump $url)
+}
+
+get_search_results () {
+    local regex_for_link_redirect='(?<=https:\/\/www\.google\.com\/url\?q=)http\S+(?=&sa=)'
+    local regex_for_link_account='\S*https:\/\/accounts\.google\.com\S*'
+    local regex_for_gstatic='\S*http:\/\/\S*gstatic\.com\/\S*'
+
+    local page_content=$1
+
+    # Get all redirecting links
+    local links=$(grep -oP $regex_for_link_redirect <<< $page_content)
+
+    # Separate links with new lines to make the next regex work
+    links=$(echo $links | tr ' ' $NEW_LINE)
+
+    # Filter out links to Google accounts
+    links=$(grep -vP $regex_for_link_account <<< $links)
+
+    # Filter out links to Google static
+    links=$(grep -vP $regex_for_gstatic <<< $links)
+
+    echo $links
+}
+
+save_to_file () {
+    local links=$1
+    local file=$2
+
+    echo $links | tr ' ' $NEW_LINE >> $file
+}
+
+get_next_page_link_number () {
+    local regex_for_link_number_to_next_page_on_first_page='(?<=\[)[0-9]+?(?=\]Next)'
+    local regex_for_link_number_to_next_page='(?<=Page\s__PAGE_NUMBER__\s\[)[0-9]+?(?=\]>)'
+
+    local page_content=$1
+    local current_page_number=$2
+
+    if [ $current_page_number == 1 ]
+    then
+        local regex=$regex_for_link_number_to_next_page_on_first_page
+    else
+        local regex=${regex_for_link_number_to_next_page/__PAGE_NUMBER__/$current_page_number}
+    fi
+
+    echo $(grep -oP $regex <<< $page_content)
+}
+
+get_link_by_number () {
+    local regex_for_link_by_number='(?<=__LINK_NUMBER__\.\s)https:\/\/www\.google\.com\/search.*?(?=\s)'
+
+    local page_content=$1
+    local link_number=$2
+
+    local regex=${regex_for_link_by_number/__LINK_NUMBER__/$link_number}
+    echo $(grep -oP $regex <<< $page_content)
+}
+
+# Replace spaces with '+'
+CURRENT_URL=$SEARCH_URL${SEARCH_PHRASE/ /+}
+CURRENT_PAGE_NUMBER=1
+
+while [ true ]
+do
+    echo "Page number: $CURRENT_PAGE_NUMBER ->> $CURRENT_URL"
+
+    PAGE_CONTENT=$(get_page_content "$CURRENT_URL")
+
+    LINKS=$(get_search_results "$PAGE_CONTENT")
+
+    save_to_file "$LINKS" $OUTPUT_FILE_NAME
+
+    LINK_NUMBER=$(get_next_page_link_number "$PAGE_CONTENT" $CURRENT_PAGE_NUMBER)
+
+    NEW_URL=$(get_link_by_number "$PAGE_CONTENT" $LINK_NUMBER)
+
+    if [ "$CURRENT_URL" == "$NEW_URL" ]
+    then
+        echo ''
+        echo "Last page content: "
+        echo "$PAGE_CONTENT"
+        break
+    fi
+
+    CURRENT_URL=$NEW_URL
+    CURRENT_PAGE_NUMBER=$((CURRENT_PAGE_NUMBER+1))
+done
+
+echo ''
+echo "Here is what was found: "
+# Print all links with numbers
+cat -n $OUTPUT_FILE_NAME
+
+exit
