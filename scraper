@@ -42,6 +42,7 @@ save_to_file () {
     local links=$1
     local file=$2
 
+    # Append links to the end of the file
     echo $links | tr ' ' $NEW_LINE >> $file
 }
 
